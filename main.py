@@ -1,61 +1,24 @@
-import abc
-import datetime
-from typing import ClassVar
+import os
 
 from langchain.chains.openai_functions import create_openai_fn_runnable
 from langchain_community.chat_models import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_core.pydantic_v1 import BaseModel
+import logging
+from telegram import Update
+from telegram.ext import (
+    filters,
+    ApplicationBuilder,
+    ContextTypes,
+    CommandHandler,
+    MessageHandler,
+)
 
+from event_models import BaseEvent
 
-class BaseEvent(BaseModel, abc.ABC):
-    event_at: datetime.datetime = Field(
-        description="time at which the event occurred",
-        default=datetime.datetime.now(),
-    )
-
-    @property
-    @abc.abstractmethod
-    def event_type(self) -> str:
-        pass
-
-
-class RecordCoffeeEvent(BaseEvent):
-    """Record an event of having coffee along with context of how many cups were had"""
-
-    event_type: ClassVar[str] = "COFFEE"
-    cups: int = Field(..., description="number of cups", ge=1)
-
-
-class RecordSocializingEvent(BaseEvent):
-    """record an event meeting up & socializing with friends"""
-
-    event_type: ClassVar[str] = "SOCIALIZE"
-    names: list[str] = Field(
-        ..., description="list of people socialized with", min_items=1
-    )
-
-
-class _RecordBicepCurlSetEvent(BaseModel):
-
-    rep_count: int = Field(..., description="number of reps", ge=1)
-    weight: float = Field(..., description="weight", ge=0.1)
-
-
-class RecordBicepCurlExerciseEvent(BaseEvent):
-    """Record an event of a bicep curl exercise with rep count and weight"""
-
-    event_type: ClassVar[str] = "BICEP_CURL"
-    sets: list[_RecordBicepCurlSetEvent] = Field(
-        ..., description="list of set data with context of rep count & weight"
-    )
-
-
-class ThoughtEvent(BaseEvent):
-    """Record a thought as normal text"""
-
-    event_type: ClassVar[str] = "THOUGHT"
-    thought: str = Field(..., description="raw text of the thought")
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 
 
 entity_transformer_chain = create_openai_fn_runnable(
@@ -89,12 +52,40 @@ add punctuation & fix grammar in the above input"""
 )
 
 
-def source_event_from_prompt(prompt: str) -> dict:
+def source_event_from_prompt(prompt: str) -> BaseModel:
     cleaned_prompt = grammar_expert_chain.invoke({"input": prompt}).content
-    event_data = entity_transformer_chain.invoke({"input": cleaned_prompt})
-    return dict(**event_data.__dict__, raw_prompt=prompt)
+    event_data: BaseModel = entity_transformer_chain.invoke({"input": cleaned_prompt})
+    return event_data
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Hello!")
+
+
+async def text_message_handler_fn(update: Update, contex: ContextTypes.DEFAULT_TYPE):
+    await contex.bot.send_message(chat_id=update.effective_chat.id, text="processing..")
+    parsed_event = source_event_from_prompt(update.message.text)
+    await contex.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"""
+stored event
+
+{parsed_event.json(indent=4)}
+""",
+    )
 
 
 if __name__ == "__main__":
-    prompts = []
-    print([source_event_from_prompt(p) for p in prompts])
+    application = (
+        ApplicationBuilder().token(os.environ.get("TELEGRAM_BOT_TOKEN")).build()
+    )
+
+    text_message_handler = MessageHandler(
+        filters.TEXT & (~filters.COMMAND), text_message_handler_fn
+    )
+    start_handler = CommandHandler("start", start)
+
+    application.add_handler(start_handler)
+    application.add_handler(text_message_handler)
+
+    application.run_polling()
