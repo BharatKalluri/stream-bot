@@ -11,7 +11,7 @@ It's 2024, why is it still hard to answer questions like
 
 ## The "how"
 
-![demo](./assets/stream-bot-demo.mp4)
+![demo](./assets/demo.gif)
 
 Here's the solution I'm proposing. Talk into the bot & send it a message. It'll figure out the type of the event & metadata and store it in a database as an event. There will be other importers which will import data to the same event database.
 
